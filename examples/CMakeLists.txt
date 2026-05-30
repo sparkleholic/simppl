@@ -37,4 +37,11 @@ add_executable(boost_executor
     asio/main.cpp
 )
 
+if(Boost_FOUND)
+    target_include_directories(boost_executor PRIVATE
+        ${Boost_INCLUDE_DIR}
+        ${Boost_INCLUDE_DIRS}
+    )
+endif()
+
 target_link_libraries(boost_executor simppl)

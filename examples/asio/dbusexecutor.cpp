@@ -33,7 +33,7 @@ struct Timeout
 
     void start()
     {
-        timer_.expires_from_now(std::chrono::milliseconds(dbus_timeout_get_interval(timeout_)));
+        timer_.expires_after(std::chrono::milliseconds(dbus_timeout_get_interval(timeout_)));
 
         timer_.async_wait([this](const boost::system::error_code& ec){
             if (ec == asio::error::operation_aborted)
