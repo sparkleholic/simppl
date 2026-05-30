@@ -12,7 +12,7 @@ namespace simppl
 namespace dbus
 {
 
-class SkeletonBase;
+struct SkeletonBase;
 
 /**
  * If native objectmanager support is enabled, this class
@@ -63,4 +63,3 @@ struct SizedObjectManagerMixin : public simppl::dbus::ObjectManagerMixin
 
 
 #endif   // __SIMPPL_DBUS_OBJECTMANAGERMIXIN_H__
-

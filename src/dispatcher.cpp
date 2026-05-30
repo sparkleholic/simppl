@@ -1,13 +1,17 @@
 #include "simppl/dispatcher.h"
 
-#include <sys/timerfd.h>
 #include <sys/poll.h>
+
+#ifdef __linux__
+#include <sys/timerfd.h>
+#endif
 
 #include <unistd.h>
 
 #include <map>
 #include <set>
 #include <atomic>
+#include <thread>
 
 #include "simppl/detail/util.h"
 #include "simppl/timeout.h"
@@ -58,12 +62,29 @@ std::string generate_property_matchstring(simppl::dbus::StubBase& stub)
 }
 
 
+[[maybe_unused]]
 inline
 std::chrono::steady_clock::time_point
 get_lookup_duetime()
 {
    return std::chrono::steady_clock::now() + 5s;
 }
+
+#ifndef __linux__
+inline
+int timeout_interval_ms(DBusTimeout* timeout)
+{
+    return dbus_timeout_get_interval(timeout);
+}
+
+
+inline
+std::chrono::steady_clock::time_point timeout_deadline(DBusTimeout* timeout)
+{
+    return std::chrono::steady_clock::now()
+        + std::chrono::milliseconds(timeout_interval_ms(timeout));
+}
+#endif
 
 
 DBusHandlerResult signal_filter(DBusConnection* /*connection*/, DBusMessage* msg, void *user_data)
@@ -248,6 +269,7 @@ struct Dispatcher::Private
 
     dbus_bool_t add_timeout(DBusTimeout* t)
     {
+#ifdef __linux__
         pollfd fd;
         fd.fd = timerfd_create(CLOCK_MONOTONIC, 0);
         fd.events = POLLIN;
@@ -270,6 +292,14 @@ struct Dispatcher::Private
 
         fds_.push_back(fd);
         tm_handlers_[fd.fd] = t;
+#else
+        const auto id = next_timeout_id_++;
+        dbus_timeout_set_data(t, reinterpret_cast<void*>(id), 0);
+
+        tm_handlers_[id] = t;
+        if (dbus_timeout_get_enabled(t))
+            tm_deadlines_[id] = timeout_deadline(t);
+#endif
 
         return TRUE;
     }
@@ -277,6 +307,7 @@ struct Dispatcher::Private
 
     void remove_timeout(DBusTimeout* t)
     {
+#ifdef __linux__
         //std::cout << "remove_timeout fd=" << reinterpret_cast<int>(dbus_timeout_get_data(t)) << std::endl;
         auto iter = std::find_if(fds_.begin(), fds_.end(), [t](auto& pfd){ return reinterpret_cast<int64_t>(dbus_timeout_get_data(t)) == pfd.fd; });
         if (iter != fds_.end())
@@ -286,11 +317,17 @@ struct Dispatcher::Private
 
             fds_.erase(iter);
         }
+#else
+        const auto id = reinterpret_cast<int64_t>(dbus_timeout_get_data(t));
+        tm_handlers_.erase(id);
+        tm_deadlines_.erase(id);
+#endif
     }
 
 
     void toggle_timeout(DBusTimeout* t)
     {
+#ifdef __linux__
         //std::cout << "toggle_timeout" << std::endl;
         auto iter = std::find_if(fds_.begin(), fds_.end(), [t](auto& pfd){ return reinterpret_cast<int64_t>(dbus_timeout_get_data(t)) == pfd.fd; });
         if (iter != fds_.end())
@@ -309,13 +346,46 @@ struct Dispatcher::Private
             else
                 timerfd_settime(iter->fd, 0, 0, 0);
         }
+#else
+        const auto id = reinterpret_cast<int64_t>(dbus_timeout_get_data(t));
+        if (dbus_timeout_get_enabled(t))
+            tm_deadlines_[id] = timeout_deadline(t);
+        else
+            tm_deadlines_.erase(id);
+#endif
     }
 
 
     int poll(int timeout)
     {
         //std::cout << "poll" << std::endl;
-        if (::poll(&fds_[0], fds_.size(), timeout) > 0)
+        int poll_timeout = timeout;
+
+#ifndef __linux__
+        if (!tm_deadlines_.empty())
+        {
+            const auto now = std::chrono::steady_clock::now();
+            const auto iter = std::min_element(
+                tm_deadlines_.begin(),
+                tm_deadlines_.end(),
+                [](const auto& lhs, const auto& rhs) { return lhs.second < rhs.second; }
+            );
+            const auto due_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                iter->second - now
+            ).count();
+            const int next_timeout = due_ms <= 0 ? 0 : static_cast<int>(due_ms);
+            poll_timeout = poll_timeout < 0 ? next_timeout : std::min(poll_timeout, next_timeout);
+        }
+#endif
+
+        const int poll_rc = fds_.empty()
+            ? 0
+            : ::poll(fds_.data(), fds_.size(), poll_timeout);
+
+        if (fds_.empty() && poll_timeout > 0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(poll_timeout));
+
+        if (poll_rc > 0)
         {
             for(auto& pfd : fds_)
             {
@@ -358,6 +428,27 @@ struct Dispatcher::Private
             }
         }
 
+#ifndef __linux__
+        const auto now = std::chrono::steady_clock::now();
+        for(auto iter = tm_deadlines_.begin(); iter != tm_deadlines_.end(); )
+        {
+            if (iter->second <= now)
+            {
+                auto t_iter = tm_handlers_.find(iter->first);
+                if (t_iter != tm_handlers_.end())
+                {
+                    dbus_timeout_handle(t_iter->second);
+                    iter->second = timeout_deadline(t_iter->second);
+                    ++iter;
+                }
+                else
+                    iter = tm_deadlines_.erase(iter);
+            }
+            else
+                ++iter;
+        }
+#endif
+
         return 0;
     }
 
@@ -374,6 +465,10 @@ struct Dispatcher::Private
 
     std::multimap<int, DBusWatch*> watch_handlers_;
     std::map<int, DBusTimeout*> tm_handlers_;
+#ifndef __linux__
+    int64_t next_timeout_id_ = 1;
+    std::map<int, std::chrono::steady_clock::time_point> tm_deadlines_;
+#endif
 
     std::multimap<std::string, StubBase*, std::less<>> stubs_;
     std::map<std::string, int> signal_matches_;

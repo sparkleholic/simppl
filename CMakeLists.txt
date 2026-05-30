@@ -3,6 +3,7 @@
 # or an add_subdirectory.
 #
 cmake_minimum_required(VERSION 3.5)
+
 project(simppl VERSION 0.4.0)
 
 # Configuration specific to being the main project
@@ -91,7 +92,7 @@ target_include_directories(simppl
         $<INSTALL_INTERFACE:include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
-link_directories(simppl
+target_link_directories(simppl PUBLIC
     ${DBUS_LIBRARY_DIRS}
 )
 target_compile_options(simppl PRIVATE -Werror -Wall -Wno-error=deprecated-declarations)
