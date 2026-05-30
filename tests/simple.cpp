@@ -585,7 +585,7 @@ TEST(Simple, fd)
 
    struct stat st;
 
-   int fd = open("/etc/fstab", O_RDONLY);
+   int fd = open("/etc/hosts", O_RDONLY);
    EXPECT_GT(fd, -1);
 
    {

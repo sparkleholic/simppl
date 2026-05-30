@@ -434,15 +434,21 @@ struct Dispatcher::Private
         {
             if (iter->second <= now)
             {
-                auto t_iter = tm_handlers_.find(iter->first);
+                const auto id = iter->first;
+                auto t_iter = tm_handlers_.find(id);
+                iter = tm_deadlines_.erase(iter);
+
                 if (t_iter != tm_handlers_.end())
                 {
                     dbus_timeout_handle(t_iter->second);
-                    iter->second = timeout_deadline(t_iter->second);
-                    ++iter;
+
+                    t_iter = tm_handlers_.find(id);
+                    if (t_iter != tm_handlers_.end()
+                        && dbus_timeout_get_enabled(t_iter->second))
+                    {
+                        tm_deadlines_[id] = timeout_deadline(t_iter->second);
+                    }
                 }
-                else
-                    iter = tm_deadlines_.erase(iter);
             }
             else
                 ++iter;

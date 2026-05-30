@@ -78,6 +78,12 @@ if(DBUS_RUN_SESSION AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
    add_test(NAME simppl_unittests
       COMMAND ${DBUS_RUN_SESSION} ${CMAKE_CURRENT_BINARY_DIR}/unittests
    )
+elseif(APPLE)
+   add_test(NAME simppl_unittests
+      COMMAND ${CMAKE_COMMAND}
+         -DTEST_EXECUTABLE=$<TARGET_FILE:unittests>
+         -P ${PROJECT_SOURCE_DIR}/cmake/RunSessionBusTest.cmake
+   )
 endif()
 
 
